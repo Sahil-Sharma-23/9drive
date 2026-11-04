@@ -34,7 +34,7 @@ Every Google account comes with 15 GB of free storage. If you have a few account
 - 📦 **One storage pool.** See the combined quota of every connected account on one dashboard.
 - 🧭 **Uploads that pick the right account.** Each file goes to an account that has enough room. You choose the rule: most free space, round-robin, or your own priority order.
 - 🗂️ **A normal file manager.** Folders, search, list and grid views, previews, rename, move, and bulk actions.
-- 🔗 **Sharing that works.** Public links with a built-in viewer, embeds, and invites for files and folders.
+- 🔗 **Sharing that works.** Public links with a built-in viewer and embeds.
 - 🔌 **An upload API.** Send files from scripts or CI with an API key.
 - 🏠 **Your own server.** Files stream straight through your backend to your storage. Nothing is written to the server's disk.
 
@@ -58,7 +58,7 @@ Try the live preview at **[9drive.zenhosta.com](https://9drive.zenhosta.com)**.
     <td><img src="docs/screenshots/all-files-grid.webp" alt="All Files page in grid view" /><br /><sub><b>Grid view</b> for browsing visually.</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/shared.webp" alt="Shared page with invites" /><br /><sub><b>Shared</b>: what you shared, who accepted, and what was shared with you.</sub></td>
+    <td><img src="docs/screenshots/shared.webp" alt="Shared page with invites" /><br /><sub><b>Shared</b>: the invites you've sent and received.</sub></td>
     <td><img src="docs/screenshots/settings.webp" alt="Settings page with connected storage accounts" /><br /><sub><b>Settings</b>: connect Google Drive or S3 and manage the Google OAuth credentials.</sub></td>
   </tr>
   <tr>
@@ -79,13 +79,13 @@ Try the live preview at **[9drive.zenhosta.com](https://9drive.zenhosta.com)**.
 
 **Files**
 - Upload by streaming, with a progress panel in the bottom-right corner.
-- Virtual folders, which you can nest, colour, and give icons.
+- Folders you can nest, colour, and give icons. They're mirrored to your first connected Google Drive.
 - Header search with filters for type, account, size, and date.
 - Preview images, videos, PDFs, and Office files. Download, rename, move, delete, recycle bin.
 
 **Sharing and teamwork**
 - Public share links with a viewer and an embed mode.
-- Invite people to a file or folder as a viewer or editor.
+- Record invites to a file or folder with a viewer or editor role. They show up on the **Shared** page, but they don't give the invited person access to the file yet.
 - Activity log.
 
 **For developers**
@@ -95,7 +95,7 @@ Try the live preview at **[9drive.zenhosta.com](https://9drive.zenhosta.com)**.
 **Accounts and admin**
 - Email/password sign-up (optional reCAPTCHA) or **Continue with Google**, which connects your first Drive automatically.
 - Google OAuth credentials can be set in **Settings**. No `.env` editing needed.
-- Backup/restore and one-click updates from Settings (for PM2 setups).
+- One-click updates from Settings (for PM2 setups).
 
 ## Quick start
 
@@ -141,7 +141,7 @@ docker compose down -v              # stop and delete the database volume
 
 You need **Node.js 20+**, **npm**, and **MySQL 8+** running on your machine.
 
-**1. Run the setup script.** It writes `backend/.env` and `frontend/.env` with secure random keys, installs dependencies, and generates the Prisma client.
+**1. Run the setup script.** It writes `backend/.env` with secure random keys, installs dependencies, and generates the Prisma client.
 
 ```bash
 # Linux / macOS
@@ -261,7 +261,7 @@ Either way, the credentials are encrypted and stored in MySQL as one global conf
 | `ACCESS_TOKEN_TTL_SECONDS` | Access token lifetime (default `900`). |
 | `REFRESH_TOKEN_TTL_DAYS` | Refresh token lifetime (default `30`). |
 | `MAX_UPLOAD_BYTES` | Largest allowed upload (default 5 GB). |
-| `RECAPTCHA_SECRET_KEY` | Optional. Turns on captcha for sign-up, together with the frontend site key. |
+| `RECAPTCHA_SECRET_KEY` | Optional. Makes the backend verify the sign-up captcha. Set it together with the frontend site key. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | Only read by the seed command. The app reads the encrypted copy from the database. |
 
 </details>
@@ -272,9 +272,11 @@ Either way, the credentials are encrypted and stored in MySQL as one global conf
 | Variable | What it does |
 | --- | --- |
 | `VITE_API_URL` | Backend URL. Vite bakes it in at build time, so **rebuild the frontend after changing it**. |
-| `VITE_RECAPTCHA_SITE_KEY` | Optional reCAPTCHA site key. Leave it empty to turn captcha off. Also baked in at build time. |
+| `VITE_RECAPTCHA_SITE_KEY` | Optional reCAPTCHA site key. When it's set, the sign-up form shows a captcha and requires it. Leave it empty to hide the captcha. Also baked in at build time. |
 
-Captcha only turns on when **both** `VITE_RECAPTCHA_SITE_KEY` and `RECAPTCHA_SECRET_KEY` are set.
+Set **both** `VITE_RECAPTCHA_SITE_KEY` and `RECAPTCHA_SECRET_KEY`, or neither. With only the site key, the sign-up form shows a captcha but the backend doesn't verify it. With only the secret key, email sign-up always fails because the form sends no captcha token.
+
+`docker-compose.yml` doesn't pass `RECAPTCHA_SECRET_KEY` to the backend, so with Docker the backend doesn't verify the captcha, even if you set the key in `.env`.
 
 </details>
 
@@ -428,6 +430,13 @@ A running Node process is locking the file. Stop the backend and frontend dev se
 <summary><b>The frontend still calls the old API URL</b></summary>
 
 Vite bakes `VITE_API_URL` into the build. Rebuild the frontend, or with Docker run `docker compose up -d --build`.
+
+</details>
+
+<details>
+<summary><b>Backup or restore in Settings fails</b></summary>
+
+Those buttons expect a SQLite database file, but 9Drive uses MySQL, so they don't work. Back up and restore the database with `mysqldump` and `mysql` instead.
 
 </details>
 
