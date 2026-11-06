@@ -66,6 +66,10 @@ The backend Docker image runs `prisma migrate deploy` and `seed:google-config:do
 
 **PWA.** The service worker's `navigateFallbackDenylist` (`vite.config.ts`) lists backend path prefixes. It only affects URLs the browser navigates to, not `fetch` calls, so add any backend route that gets opened directly, such as an OAuth callback. It matches unprefixed paths, so it doesn't cover `/api/*` in the nginx deployment.
 
+**Theming.** `style.css` defines semantic tokens (`@theme inline`) whose values switch on `:root` / `:root.dark`, so components need no `dark:` variants. Keep custom CSS inside `@layer`: Tailwind v4 utilities live in a layer, so any unlayered rule beats every utility, whatever its specificity. Overlays render through `createPortal` because `animate-page-in` and `backdrop-filter` make `position: fixed` relative to the animating ancestor. `prefers-reduced-motion` is handled once, at the end of `style.css`.
+
+**Folder icons.** `Folder.iconUrl` holds an Iconify URL, and the API validates that prefix, but that URL form now returns 404. Treat it as a stable ID: `FolderVisual` maps it to a local `lucide-react` icon, so a new option needs an entry in `folderIconOptions`.
+
 **Mock pages.** Archived, Starred, and Recent render hard-coded data from `frontend/src/data/drive-data.ts` and aren't wired to the API. That file also exports the `FileItem` and `FolderItem` types that real components use.
 
 **Env files.** `frontend/.env` is tracked despite the rule against committing `.env` files. It holds only public values, but its reCAPTCHA site key makes the register form require a captcha locally, even with no backend secret. Set `VITE_RECAPTCHA_SITE_KEY=` in `frontend/.env.local` to turn that off. The reverse also breaks: with only the backend secret set, email sign-up always fails, because the form sends no token. `docker-compose.yml` doesn't pass `RECAPTCHA_SECRET_KEY` to the backend, so registration isn't captcha-verified in Docker even if `.env` sets it.

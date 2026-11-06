@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 import { Outlet, useOutletContext, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Bell,
@@ -8,14 +8,11 @@ import {
   History,
   LogOut,
   Menu,
-  Moon,
-  MoreVertical,
   Search,
   Settings,
   Share2,
   SlidersHorizontal,
   Star,
-  Sun,
   Trash2,
   X,
   ShieldCheck,
@@ -25,13 +22,21 @@ import {
   ChevronDown,
   Upload
 } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { BrandLogo } from '@/components/drive/BrandLogo'
+import { fileKinds } from '@/components/drive/FileIcon'
+import { ThemeToggle } from '@/components/drive/ThemeToggle'
+import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Progress, type ProgressTone } from '@/components/ui/progress'
+import { Select } from '@/components/ui/select'
 import { apiFetch, formatBytes } from '@/lib/api'
-import { useUpload } from '@/context/UploadContext'
+import { useUpload, type UploadProgressStatus } from '@/context/UploadContext'
 import { clearAuthSession, getStoredUser, updateStoredUser, type AuthUser } from '@/lib/auth'
 import { getGravatarUrl } from '@/lib/gravatar'
+import { useDismiss } from '@/lib/use-dismiss'
+import { useLatestWhile, usePresence } from '@/lib/use-presence'
 import { cn } from '@/lib/utils'
 
 const menu = [
@@ -41,14 +46,18 @@ const menu = [
   { label: 'Starred', icon: Star, href: '/starred', disabled: true },
   { label: 'Recycle Bin', icon: Trash2, href: '/trash' },
   { label: 'Activity Log', icon: History, href: '/activity' },
-  { label: 'Setting', icon: Settings, href: '/settings' },
+  { label: 'Settings', icon: Settings, href: '/settings' },
   { label: 'API Keys', icon: Braces, href: '/api' },
 ]
+
+// Matches the nav rows below: h-10 plus gap-1. The active pill slides by this step.
+const navRowStepRem = 2.75
 
 type StorageSummary = {
   totalBytes: string
   usedBytes: string
   availableBytes: string
+  accounts?: { id: string; provider: string; email: string; status: string }[]
 }
 
 type StorageBreakdown = {
@@ -57,48 +66,55 @@ type StorageBreakdown = {
   document: string
 }
 
-function SystemInfoDropdown({ storage }: { storage: any }) {
-  const activeGoogle = storage?.accounts?.filter((a: any) => a.provider === 'google_drive' && a.status === 'connected') ?? []
+const popoverMotion = 'origin-top data-[state=closed]:animate-pop-out data-[state=open]:animate-pop-in'
+
+function ConnectionRow({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-line bg-surface-sunken p-2.5 text-xs">
+      <span className="font-semibold text-fg">{label}</span>
+      <Badge tone={count > 0 ? 'success' : 'warning'}>{count} Connected</Badge>
+    </div>
+  )
+}
+
+function SystemInfoDropdown({ storage, state }: { storage: StorageSummary | null; state: 'open' | 'closed' }) {
+  const connected = storage?.accounts?.filter((account) => account.status === 'connected') ?? []
+  const activeGoogle = connected.filter((account) => account.provider === 'google_drive')
+  const activeS3 = connected.filter((account) => account.provider === 's3')
+  const headingClass = 'flex items-center gap-1.5 text-xs font-bold text-fg-muted'
 
   return (
-    <div className="absolute right-0 top-12 z-50 w-[min(calc(100vw-2rem),22rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/15">
-      <div className="border-b border-slate-200 px-4 py-3 bg-slate-50/50">
-        <p className="text-sm font-extrabold text-slate-950">Workspace Status & Info</p>
-        <p className="text-xs text-slate-500">Overview of your connections & guidelines</p>
+    <div data-state={state} className={cn('absolute right-0 top-12 z-50 w-[min(calc(100vw-2rem),22rem)] overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-pop', popoverMotion)}>
+      <div className="border-b border-line bg-surface-sunken px-4 py-3">
+        <p className="text-sm font-extrabold text-fg">Workspace Status & Info</p>
+        <p className="text-xs text-fg-muted">Overview of your connections & guidelines</p>
       </div>
-      <div className="max-h-96 overflow-y-auto p-4 space-y-4">
-        {/* Connection status */}
+      <div className="max-h-96 space-y-4 overflow-y-auto p-4">
         <div>
-          <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Connection Status</h4>
+          <h4 className={headingClass}><ShieldCheck className="h-3.5 w-3.5 text-success" aria-hidden="true" /> Connection Status</h4>
           <div className="mt-2 space-y-2">
-            <div className="flex items-center justify-between text-xs rounded-xl bg-slate-50 p-2.5 border border-slate-100">
-              <span className="font-semibold text-slate-700">Google Drive accounts</span>
-              <span className={activeGoogle.length > 0 ? "text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold border border-emerald-100" : "text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold border border-amber-100"}>
-                {activeGoogle.length} Connected
-              </span>
-            </div>
-            {activeGoogle.map((acc: any) => (
-              <p key={acc.id} className="text-[11px] text-slate-500 truncate px-2.5">— {acc.email}</p>
+            <ConnectionRow label="Google Drive accounts" count={activeGoogle.length} />
+            {activeGoogle.map((account) => (
+              <p key={account.id} className="truncate px-2.5 text-[11px] text-fg-muted">{account.email}</p>
             ))}
+            <ConnectionRow label="S3 buckets" count={activeS3.length} />
           </div>
         </div>
 
-        {/* Database & engine status */}
         <div>
-          <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><HardDrive className="h-3.5 w-3.5 text-blue-500" /> Storage Engine</h4>
-          <div className="mt-2 text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-            <p>• <b>DB Type:</b> SQLite (Local Database)</p>
-            <p>• <b>Upload Folder:</b> Google Drive dedicated <code>9drive</code></p>
-            <p>• <b>Max Upload Size:</b> 5 GB per stream</p>
+          <h4 className={headingClass}><HardDrive className="h-3.5 w-3.5 text-accent" aria-hidden="true" /> Storage Engine</h4>
+          <div className="mt-2 space-y-1 rounded-xl border border-line bg-surface-sunken p-2.5 text-xs text-fg-muted">
+            <p><b className="font-semibold text-fg">Database:</b> MySQL</p>
+            <p><b className="font-semibold text-fg">Upload folder:</b> Google Drive <code>9drive</code></p>
+            <p><b className="font-semibold text-fg">Max upload size:</b> 5 GB per stream</p>
           </div>
         </div>
 
-        {/* Tips & Guides */}
         <div>
-          <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><Info className="h-3.5 w-3.5 text-indigo-500" /> Usage Tips</h4>
-          <ul className="mt-2 text-[11px] text-slate-500 list-disc list-inside space-y-1 pl-1">
-            <li>Virtual folders exist only in your SQLite database.</li>
-            <li>Physical files are always uploaded straight to Google Drive.</li>
+          <h4 className={headingClass}><Info className="h-3.5 w-3.5 text-accent" aria-hidden="true" /> Usage Tips</h4>
+          <ul className="mt-2 list-inside list-disc space-y-1 pl-1 text-[11px] text-fg-muted">
+            <li>Folders are mirrored to your first connected Google Drive.</li>
+            <li>Files upload straight to your connected storage.</li>
             <li>Use the Sync button to fetch changes made directly on Drive.</li>
           </ul>
         </div>
@@ -108,16 +124,18 @@ function SystemInfoDropdown({ storage }: { storage: any }) {
 }
 
 function Sidebar({ onNavigate, user, storage, breakdown, onLogout }: { onNavigate?: () => void; user: AuthUser | null; storage: StorageSummary | null; breakdown: StorageBreakdown; onLogout: () => void }) {
+  const { pathname } = useLocation()
   const used = Number(storage?.usedBytes ?? 0)
   const total = Number(storage?.totalBytes ?? 0)
   const progress = total > 0 ? Math.min(100, (used / total) * 100) : 0
   const [profileImageUrl, setProfileImageUrl] = useState('')
   const [avatarError, setAvatarError] = useState(false)
+  const activeIndex = menu.findIndex((item) => !item.disabled && pathname.startsWith(item.href))
   const items = [
-    ['Photo', formatBytes(breakdown.photo), 'bg-lime-500'],
-    ['Video', formatBytes(breakdown.video), 'bg-yellow-400'],
-    ['Document', formatBytes(breakdown.document), 'bg-cyan-400'],
-    ['Free Storage', formatBytes(storage?.availableBytes), 'bg-orange-500'],
+    ['Photo', formatBytes(breakdown.photo), fileKinds.image.dot],
+    ['Video', formatBytes(breakdown.video), fileKinds.video.dot],
+    ['Document', formatBytes(breakdown.document), fileKinds.doc.dot],
+    ['Free Storage', formatBytes(storage?.availableBytes), 'bg-fg-subtle'],
   ]
 
   useEffect(() => {
@@ -126,67 +144,140 @@ function Sidebar({ onNavigate, user, storage, breakdown, onLogout }: { onNavigat
   }, [user?.email])
 
   return (
-    <aside className="flex h-full w-64 flex-col border-slate-200/60 bg-slate-50/40 backdrop-blur-xl p-4 lg:border-r">
+    <aside className="flex h-full w-64 flex-col overflow-y-auto border-line bg-sidebar p-4 backdrop-blur-xl lg:border-r">
       <div className="flex items-center gap-2.5 pb-3 pt-1">
         <BrandLogo className="h-8 w-8" />
-        <span className="text-xl font-extrabold tracking-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">9Drive</span>
+        <span className="text-xl font-extrabold tracking-tight text-fg">9Drive</span>
       </div>
 
-      <div className="flex items-center gap-2.5 border-y border-slate-200/60 py-3 my-3">
+      <div className="my-3 flex items-center gap-2.5 border-y border-line py-3">
         {!profileImageUrl || avatarError ? (
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-xs font-bold text-white shadow-sm border border-blue-400/20">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-gradient text-xs font-bold text-white shadow-sm">
             {(user?.name ?? user?.email ?? 'U').trim().charAt(0).toUpperCase()}
           </div>
         ) : (
           <img
             src={profileImageUrl}
-            alt="User avatar"
-            className="h-8 w-8 rounded-full border border-slate-200 object-cover"
+            alt=""
+            className="h-8 w-8 shrink-0 animate-fade-in rounded-full border border-line object-cover"
             onError={() => setAvatarError(true)}
           />
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-bold text-slate-900 leading-none">{user?.name ?? 'User'}</p>
-          <p className="truncate text-xs text-slate-500 mt-1">{user?.email ?? 'Loading...'}</p>
+          <p className="truncate text-[15px] font-bold leading-none text-fg">{user?.name ?? 'User'}</p>
+          <p className="mt-1 truncate text-xs text-fg-muted">{user?.email ?? 'Loading...'}</p>
         </div>
-        <MoreVertical className="h-4 w-4 text-slate-400" />
       </div>
 
-      <nav className="grid gap-1">
+      <nav aria-label="Main" className="relative grid gap-1">
+        {activeIndex >= 0 ? (
+          <span
+            aria-hidden="true"
+            className="absolute inset-x-0 top-0 h-10 rounded-xl border border-accent-line bg-accent-soft transition-transform duration-300 ease-soft"
+            style={{ transform: `translateY(${activeIndex * navRowStepRem}rem)` }}
+          />
+        ) : null}
         {menu.map((item) => item.disabled ? (
-          <button key={item.label} type="button" disabled className="inline-flex h-10 cursor-not-allowed items-center gap-2 rounded-xl px-3.5 text-[13px] font-bold text-slate-400 opacity-60">
-            <item.icon className="h-4 w-4" />
+          <button key={item.label} type="button" disabled title="Coming soon" className="relative inline-flex h-10 cursor-not-allowed items-center gap-2.5 rounded-xl px-3.5 text-[13px] font-bold text-fg-subtle opacity-60">
+            <item.icon className="h-4 w-4" aria-hidden="true" />
             {item.label}
           </button>
         ) : (
-          <NavLink key={item.label} to={item.href} onClick={onNavigate} className={({ isActive }) => cn('inline-flex h-10 items-center gap-2.5 rounded-xl px-3.5 text-[13px] font-bold transition-all border border-transparent', isActive ? 'bg-blue-600/10 text-blue-600 border-blue-600/10 shadow-sm' : 'text-slate-600 hover:bg-slate-200/50 hover:text-slate-900')}>
-            <item.icon className="h-4 w-4" />
+          <NavLink key={item.label} to={item.href} onClick={onNavigate} className={({ isActive }) => cn('group relative inline-flex h-10 items-center gap-2.5 rounded-xl px-3.5 text-[13px] font-bold transition-colors duration-150', isActive ? 'text-accent' : 'text-fg-muted hover:bg-surface-hover hover:text-fg')}>
+            <item.icon className="h-4 w-4 transition-transform duration-200 ease-soft group-hover:scale-110" aria-hidden="true" />
             {item.label}
           </NavLink>
         ))}
       </nav>
 
-      <div className="mt-auto border-t border-slate-200/60 pt-4 text-[13px]">
+      <div className="mt-auto border-t border-line pt-4 text-[13px]">
         <div className="mb-3 space-y-1.5">
           {items.map(([label, value, color]) => (
-            <div key={label} className="flex items-center justify-between text-slate-500 font-medium">
+            <div key={label} className="flex items-center justify-between font-medium text-fg-muted">
               <span className="flex items-center gap-1.5"><span className={cn('h-1.5 w-1.5 rounded-full', color)} />{label}</span>
-              <span className="font-semibold text-slate-700">{value}</span>
+              <span className="font-semibold tabular-nums text-fg">{value}</span>
             </div>
           ))}
         </div>
-        <div className="flex justify-between text-sm font-bold text-slate-700">
-          <span>{formatBytes(storage?.usedBytes)} used</span>
-          <span className="text-slate-400">{formatBytes(storage?.totalBytes)}</span>
+        <div className="flex justify-between text-sm font-bold text-fg">
+          <span className="tabular-nums">{formatBytes(storage?.usedBytes)} used</span>
+          <span className="tabular-nums text-fg-subtle">{formatBytes(storage?.totalBytes)}</span>
         </div>
-        <div className="my-2 h-1.5 rounded-full bg-slate-200/60 overflow-hidden">
-          <div className="h-full rounded-full bg-blue-600 transition-all duration-300" style={{ width: `${progress}%` }} />
-        </div>
-        <Button variant="danger" size="sm" className="mt-3 w-full justify-start h-10 px-3 text-[13px] font-bold" onClick={onLogout}>
+        <Progress value={progress} label="Storage used" className="my-2 h-1.5" />
+        <Button variant="ghost" size="sm" className="mt-3 h-10 w-full justify-start px-3 text-[13px] font-bold text-danger hover:bg-danger-soft hover:text-danger" onClick={onLogout}>
           <LogOut className="h-4 w-4" />Log Out
         </Button>
       </div>
     </aside>
+  )
+}
+
+function uploadTone(status: UploadProgressStatus): ProgressTone {
+  if (status === 'done') return 'success'
+  return status === 'error' || status === 'partial' ? 'danger' : 'accent'
+}
+
+function UploadProgressPanel() {
+  const { uploadProgress, setUploadProgress, retryFailedUpload } = useUpload()
+  const [collapsed, setCollapsed] = useState(false)
+  const { mounted, state } = usePresence(uploadProgress.open, 180)
+  const progress = useLatestWhile(uploadProgress, uploadProgress.open)
+
+  if (!mounted) return null
+
+  const failed = progress.status === 'partial' || progress.status === 'error'
+  const title = progress.status === 'done' ? 'Upload complete' : progress.status === 'partial' ? 'Upload completed with errors' : progress.status === 'error' ? 'Upload failed' : progress.percent >= 99 ? 'Processing on server' : 'Uploading files'
+
+  return (
+    <div data-state={state} className="fixed inset-x-3 bottom-3 z-[70] max-h-[70dvh] overflow-hidden rounded-2xl border border-line bg-surface-raised shadow-pop data-[state=closed]:animate-sheet-out data-[state=open]:animate-sheet-in sm:inset-x-auto sm:bottom-5 sm:right-5 sm:w-[min(420px,calc(100vw-2.5rem))]">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <div className="flex items-center gap-2 text-sm font-extrabold text-fg">
+          {progress.status === 'done' ? <CheckCircle key="done" className="h-5 w-5 animate-tick text-success" aria-hidden="true" /> : failed ? <X key="failed" className="h-5 w-5 animate-tick text-danger" aria-hidden="true" /> : <Upload key="uploading" className="h-5 w-5 text-accent" aria-hidden="true" />}
+          {title}
+        </div>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={collapsed ? 'Expand upload progress' : 'Collapse upload progress'} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}><ChevronDown className={cn('h-4 w-4 transition-transform duration-200 ease-soft', collapsed && 'rotate-180')} /></Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Close upload progress" onClick={() => setUploadProgress((current) => ({ ...current, open: false }))}><X className="h-4 w-4" /></Button>
+        </div>
+      </div>
+      <div className={cn('grid transition-[grid-template-rows] duration-200 ease-soft', collapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]')}>
+        <div className="min-h-0 overflow-hidden">
+          <div className="p-4">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <p className="truncate font-semibold text-fg">{progress.fileName}</p>
+              <span className="tabular-nums text-fg-muted">{progress.percent}%</span>
+            </div>
+            <Progress value={progress.percent} tone={uploadTone(progress.status)} label="Overall upload progress" className="mt-3" />
+            {progress.files.length > 0 ? (
+              <div className="mt-4 grid max-h-64 gap-3 overflow-y-auto pr-1">
+                {progress.files.map((file, index) => (
+                  <div key={`${file.name}-${file.size}-${index}`} className="grid gap-1 rounded-xl bg-surface-sunken p-3">
+                    <div className="flex min-w-0 items-center justify-between gap-3 text-sm">
+                      <p className="min-w-0 flex-1 truncate font-semibold text-fg" title={file.name}>{file.name}</p>
+                      <span className="shrink-0 text-xs tabular-nums text-fg-muted">{file.percent}%</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 text-xs text-fg-muted">
+                      <span className="tabular-nums">{formatBytes(file.size)}</span>
+                      <div className="flex items-center gap-2">
+                        {file.status === 'error' ? (
+                          <Button size="sm" className="h-6 rounded-lg px-2 text-[11px] font-extrabold shadow-none hover:shadow-none" onClick={() => retryFailedUpload(file.name)}>
+                            Retry
+                          </Button>
+                        ) : null}
+                        <span className={cn('font-semibold', file.status === 'error' ? 'text-danger' : file.status === 'done' ? 'text-success' : 'text-accent')}>
+                          {file.status === 'error' ? 'Failed' : file.status === 'done' ? 'Done' : file.percent >= 99 ? 'Processing' : 'Uploading'}
+                        </span>
+                      </div>
+                    </div>
+                    <Progress value={file.percent} tone={uploadTone(file.status)} label={`${file.name} upload progress`} className="h-1.5" />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -215,13 +306,9 @@ export function DriveLayout() {
   const [breakdown, setBreakdown] = useState<StorageBreakdown>({ photo: '0', video: '0', document: '0' })
   const [infoOpen, setInfoOpen] = useState(false)
   const [headerActions, setHeaderActions] = useState<ReactNode>(null)
-  const { uploadProgress, setUploadProgress, retryFailedUpload } = useUpload()
-  const [uploadProgressCollapsed, setUploadProgressCollapsed] = useState(false)
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('9drive:theme')
-    if (saved === 'light' || saved === 'dark') return saved
-    return 'dark'
-  })
+  const scrollAreaRef = useRef<HTMLElement>(null)
+  const infoRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLDivElement>(null)
 
   // Advanced search states
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([])
@@ -245,21 +332,12 @@ export function DriveLayout() {
     return raw ? raw.split('T')[0] : ''
   })
 
-  useEffect(() => {
-    const root = document.documentElement
-    if (theme === 'dark') {
-      root.classList.add('dark')
-      root.classList.remove('light')
-    } else {
-      root.classList.add('light')
-      root.classList.remove('dark')
-    }
-    localStorage.setItem('9drive:theme', theme)
-  }, [theme])
+  const infoPresence = usePresence(infoOpen, 120)
+  const filtersPresence = usePresence(filtersOpen, 120)
+  const hasActiveFilters = ['kind', 'accountId', 'minSize', 'maxSize', 'startDate', 'endDate'].some((key) => searchParams.has(key))
 
-  function toggleTheme() {
-    setTheme((t) => (t === 'light' ? 'dark' : 'light'))
-  }
+  useDismiss(infoRef, infoOpen, () => setInfoOpen(false))
+  useDismiss(searchRef, filtersOpen, () => setFiltersOpen(false))
 
   async function loadSidebarStats() {
     await Promise.all([
@@ -297,6 +375,12 @@ export function DriveLayout() {
     setFilterEndDate(rawEnd ? rawEnd.split('T')[0] : '')
   }, [searchParams])
 
+  // Pages share one scroll area, so a new route must not inherit the old scroll position.
+  useEffect(() => {
+    scrollAreaRef.current?.scrollTo({ top: 0 })
+    window.scrollTo({ top: 0 })
+  }, [location.pathname])
+
   async function logout() {
     await apiFetch('/auth/logout', { method: 'POST' }).catch(() => undefined)
     clearAuthSession()
@@ -329,7 +413,8 @@ export function DriveLayout() {
       nextParams.set('startDate', new Date(filterStartDate).toISOString())
     }
     if (filterEndDate) {
-      nextParams.set('endDate', new Date(filterEndDate).toISOString())
+      // Include the whole end day, not just its first instant.
+      nextParams.set('endDate', new Date(`${filterEndDate}T23:59:59.999Z`).toISOString())
     }
 
     setFiltersOpen(false)
@@ -374,195 +459,121 @@ export function DriveLayout() {
     return () => window.removeEventListener('9drive:storage-changed', loadSidebarStats)
   }, [])
 
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') setInfoOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  const filterFieldClass = 'text-xs font-bold text-fg-muted'
+  const filterControlClass = 'h-10 text-sm font-normal'
 
   return (
-    <main className="min-h-screen w-full overflow-x-hidden bg-white">
-      <div className="flex min-h-screen w-full flex-col bg-white lg:h-screen lg:overflow-hidden lg:flex-row">
+    <main className="min-h-screen w-full overflow-x-hidden">
+      <div className="flex min-h-screen w-full flex-col lg:h-screen lg:flex-row lg:overflow-hidden">
         <div className="hidden lg:block lg:h-screen lg:shrink-0">
           <Sidebar user={user} storage={storage} breakdown={breakdown} onLogout={logout} />
         </div>
-        <div className={cn('fixed inset-0 z-40 bg-slate-950/40 transition-opacity lg:hidden', sidebarOpen ? 'opacity-100' : 'pointer-events-none opacity-0')} onClick={() => setSidebarOpen(false)} />
-        <div className={cn('fixed inset-y-0 left-0 z-50 transform bg-white shadow-2xl transition-transform duration-300 ease-out lg:hidden', sidebarOpen ? 'translate-x-0' : '-translate-x-full')}>
-          <div className="absolute right-4 top-4 z-10">
-            <Button variant="outline" size="icon" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)}>
+        <div className={cn('fixed inset-0 z-40 bg-scrim transition-opacity duration-200 lg:hidden', sidebarOpen ? 'opacity-100' : 'pointer-events-none opacity-0')} onClick={() => setSidebarOpen(false)} />
+        <div inert={!sidebarOpen} className={cn('fixed inset-y-0 left-0 z-50 transform bg-surface-raised shadow-pop transition-transform duration-300 ease-soft lg:hidden', sidebarOpen ? 'translate-x-0' : '-translate-x-full')}>
+          <div className="absolute right-3 top-3 z-10">
+            <Button variant="ghost" size="icon-sm" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)}>
               <X className="h-5 w-5" />
             </Button>
           </div>
           <Sidebar user={user} storage={storage} breakdown={breakdown} onLogout={logout} onNavigate={() => setSidebarOpen(false)} />
         </div>
-        <section className="min-w-0 flex-1 p-4 sm:p-6 lg:h-screen lg:overflow-y-auto lg:p-8">
-          <header className="flex w-full min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center justify-between gap-3 lg:hidden">
-              <div className="flex min-w-0 items-center gap-3">
-                <Button variant="outline" size="icon" aria-label="Open sidebar" onClick={() => setSidebarOpen(true)}>
-                  <Menu className="h-5 w-5" />
-                </Button>
-                <div className="flex min-w-0 items-center gap-2">
-                  <BrandLogo className="h-9 w-9 shrink-0" />
-                  <span className="truncate text-xl font-extrabold tracking-tight">9Drive</span>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="icon" aria-label="Toggle theme" onClick={toggleTheme}>
-                  {theme === 'light' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
-                </Button>
-                <div className="relative shrink-0">
-                  <Button variant="outline" size="icon" className="relative" aria-label="System info" aria-expanded={infoOpen} onClick={() => setInfoOpen(!infoOpen)}>
-                    <Bell className="h-5 w-5" />
-                    {!infoOpen ? <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-blue-600" /> : null}
-                  </Button>
-                  {infoOpen ? <SystemInfoDropdown storage={storage} /> : null}
-                </div>
+        <section ref={scrollAreaRef} className="min-w-0 flex-1 p-4 sm:p-6 lg:h-screen lg:overflow-y-auto lg:p-8">
+          <header className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3 lg:hidden">
+              <Button variant="outline" size="icon" aria-label="Open sidebar" onClick={() => setSidebarOpen(true)}>
+                <Menu className="h-5 w-5" />
+              </Button>
+              <div className="flex min-w-0 items-center gap-2">
+                <BrandLogo className="h-9 w-9 shrink-0" />
+                <span className="truncate text-xl font-extrabold tracking-tight text-fg">9Drive</span>
               </div>
             </div>
-            <div className="relative w-full min-w-0 flex-1 lg:max-w-sm xl:max-w-xl">
-              <form onSubmit={searchFiles} className="relative w-full">
-                <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
-                <Input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder="Search Documents" className="pl-11 pr-12" />
-                <button type="button" onClick={() => setFiltersOpen(!filtersOpen)} className={cn("absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900 transition-colors", filtersOpen && "text-blue-600 hover:text-blue-700")} aria-label="Search filters"><SlidersHorizontal className="h-5 w-5" /></button>
+
+            <div ref={searchRef} className="relative order-last w-full min-w-0 lg:order-none lg:w-auto lg:max-w-sm lg:flex-1 xl:max-w-xl">
+              <form role="search" onSubmit={searchFiles} className="relative w-full">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-fg-subtle" aria-hidden="true" />
+                <Input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder="Search Documents" aria-label="Search files" className="pl-11 pr-12" />
+                <Button type="button" variant="ghost" size="icon-sm" onClick={() => setFiltersOpen(!filtersOpen)} className={cn('absolute right-1 top-1/2 -translate-y-1/2', (filtersOpen || hasActiveFilters) && 'text-accent hover:text-accent')} aria-label="Search filters" aria-expanded={filtersOpen}>
+                  <SlidersHorizontal className="h-5 w-5" />
+                  {hasActiveFilters ? <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-accent-solid" /> : null}
+                </Button>
               </form>
 
-              {filtersOpen && (
-                <div className="absolute left-0 right-0 top-12 z-50 rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-top-2 duration-150">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <span className="text-sm font-extrabold text-slate-950">Advanced Search Filters</span>
-                    <button type="button" onClick={clearFilters} className="text-xs font-bold text-blue-600 hover:text-blue-700">Clear All</button>
+              {filtersPresence.mounted ? (
+                <div data-state={filtersPresence.state} className={cn('absolute left-0 top-12 z-50 w-full rounded-2xl border border-line bg-surface-raised p-5 shadow-pop lg:w-[max(100%,26rem)]', popoverMotion)}>
+                  <div className="flex items-center justify-between border-b border-line pb-3">
+                    <span className="text-sm font-extrabold text-fg">Advanced Search Filters</span>
+                    <button type="button" onClick={clearFilters} className="text-xs font-bold text-accent transition-opacity duration-150 hover:opacity-80">Clear All</button>
                   </div>
 
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                    {/* File Kind */}
-                    <div>
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">File Type</label>
-                      <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-none">
+                    <Field label="File Type" className={filterFieldClass}>
+                      <Select value={filterKind} onChange={(e) => setFilterKind(e.target.value)} className={filterControlClass}>
                         <option value="">All Types</option>
                         <option value="image">Image</option>
                         <option value="video">Video</option>
                         <option value="pdf">PDF</option>
                         <option value="doc">Document</option>
                         <option value="archive">Archive</option>
-                      </select>
-                    </div>
+                      </Select>
+                    </Field>
 
-                    {/* Connected Account */}
-                    <div>
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Connected Account</label>
-                      <select value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-none">
+                    <Field label="Connected Account" className={filterFieldClass}>
+                      <Select value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className={filterControlClass}>
                         <option value="">All Accounts</option>
                         {accounts.map((acc) => (
                           <option key={acc.id} value={acc.id}>{acc.email} ({acc.provider})</option>
                         ))}
-                      </select>
-                    </div>
+                      </Select>
+                    </Field>
 
-                    {/* Size range */}
-                    <div>
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Size Range (MB)</label>
-                      <div className="mt-1 flex items-center gap-2">
-                        <input type="number" placeholder="Min" value={filterMinSize} onChange={(e) => setFilterMinSize(e.target.value)} className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-none" />
-                        <span className="text-slate-400 text-xs font-semibold">to</span>
-                        <input type="number" placeholder="Max" value={filterMaxSize} onChange={(e) => setFilterMaxSize(e.target.value)} className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-none" />
+                    <div className="grid gap-1.5 sm:col-span-2">
+                      <span className={filterFieldClass}>Size Range (MB)</span>
+                      <div className="flex items-center gap-2">
+                        <Input type="number" min={0} placeholder="Min" aria-label="Minimum size in MB" value={filterMinSize} onChange={(e) => setFilterMinSize(e.target.value)} className={filterControlClass} />
+                        <span className="text-xs font-semibold text-fg-subtle">to</span>
+                        <Input type="number" min={0} placeholder="Max" aria-label="Maximum size in MB" value={filterMaxSize} onChange={(e) => setFilterMaxSize(e.target.value)} className={filterControlClass} />
                       </div>
                     </div>
 
-                    {/* Date range */}
-                    <div>
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Date Range</label>
-                      <div className="mt-1 flex items-center gap-2">
-                        <input type="date" value={filterStartDate} onChange={(e) => setFilterStartDate(e.target.value)} className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-none" />
-                        <span className="text-slate-400 text-xs font-semibold">to</span>
-                        <input type="date" value={filterEndDate} onChange={(e) => setFilterEndDate(e.target.value)} className="block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-500 focus:bg-white focus:outline-none" />
+                    <div className="grid gap-1.5 sm:col-span-2">
+                      <span className={filterFieldClass}>Date Range</span>
+                      <div className="flex items-center gap-2">
+                        <Input type="date" aria-label="Start date" value={filterStartDate} onChange={(e) => setFilterStartDate(e.target.value)} className={cn(filterControlClass, 'px-2.5')} />
+                        <span className="text-xs font-semibold text-fg-subtle">to</span>
+                        <Input type="date" aria-label="End date" value={filterEndDate} onChange={(e) => setFilterEndDate(e.target.value)} className={cn(filterControlClass, 'px-2.5')} />
                       </div>
                     </div>
                   </div>
 
-                  <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
+                  <div className="mt-5 flex justify-end gap-2 border-t border-line pt-4">
                     <Button variant="outline" size="sm" type="button" onClick={() => setFiltersOpen(false)}>Cancel</Button>
                     <Button variant="default" size="sm" type="button" onClick={applyFilters}>Apply Filters</Button>
                   </div>
                 </div>
-              )}
+              ) : null}
             </div>
-            {/* Header actions injected by child pages */}
-            {headerActions ? (
-              <div className="hidden lg:flex items-center gap-2 shrink-0">
-                {headerActions}
+
+            <div className="flex shrink-0 items-center gap-2">
+              {/* Header actions injected by child pages */}
+              {headerActions ? <div className="hidden items-center gap-2 xl:flex">{headerActions}</div> : null}
+              <ThemeToggle />
+              <div ref={infoRef} className="relative">
+                <Button variant="outline" size="icon" className="relative" aria-label="System info" aria-expanded={infoOpen} onClick={() => setInfoOpen(!infoOpen)}>
+                  <Bell className="h-5 w-5" />
+                  <span className={cn('absolute right-2 top-2 h-2 w-2 rounded-full bg-accent-solid transition-[opacity,transform] duration-200 ease-soft', infoOpen && 'scale-0 opacity-0')} />
+                </Button>
+                {infoPresence.mounted ? <SystemInfoDropdown storage={storage} state={infoPresence.state} /> : null}
               </div>
-            ) : null}
-             <div className="relative hidden flex-wrap gap-2 lg:flex shrink-0">
-              <Button variant="outline" size="icon" aria-label="Toggle theme" onClick={toggleTheme}>
-                {theme === 'light' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
-              </Button>
-              <Button variant="outline" size="icon" className="relative" aria-label="System info" aria-expanded={infoOpen} onClick={() => setInfoOpen(!infoOpen)}>
-                <Bell className="h-5 w-5" />
-                {!infoOpen ? <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-blue-600" /> : null}
-              </Button>
-              {infoOpen ? <SystemInfoDropdown storage={storage} /> : null}
             </div>
           </header>
-          <Outlet context={{ setHeaderActions } satisfies DriveLayoutContext} />
+          <div key={location.pathname} className="animate-page-in">
+            <Outlet context={{ setHeaderActions } satisfies DriveLayoutContext} />
+          </div>
         </section>
       </div>
 
-      {uploadProgress.open ? (
-        <div className="fixed inset-x-3 bottom-3 z-[70] max-h-[70dvh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/20 sm:inset-x-auto sm:bottom-5 sm:right-5 sm:w-[min(420px,calc(100vw-2.5rem))]">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <div className="flex items-center gap-2 font-extrabold text-sm text-slate-950">
-              {uploadProgress.status === 'done' ? <CheckCircle className="h-5 w-5 text-emerald-500" /> : uploadProgress.status === 'partial' || uploadProgress.status === 'error' ? <X className="h-5 w-5 text-red-500" /> : <Upload className="h-5 w-5 text-blue-600" />}
-              {uploadProgress.status === 'done' ? 'Upload complete' : uploadProgress.status === 'partial' ? 'Upload completed with errors' : uploadProgress.status === 'error' ? 'Upload failed' : uploadProgress.percent >= 99 ? 'Processing on server' : 'Uploading files'}
-            </div>
-            <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setUploadProgressCollapsed(!uploadProgressCollapsed)}><ChevronDown className={cn("h-4 w-4 transition-transform", uploadProgressCollapsed && "rotate-180")} /></Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setUploadProgress((current) => ({ ...current, open: false }))}><X className="h-4 w-4" /></Button>
-            </div>
-          </div>
-          {!uploadProgressCollapsed && (
-            <div className="p-4">
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <p className="truncate font-semibold">{uploadProgress.fileName}</p>
-                <span className="text-slate-500">{uploadProgress.percent}%</span>
-              </div>
-              <div className="mt-3 h-2 rounded-full bg-slate-100">
-                <div className={uploadProgress.status === 'error' || uploadProgress.status === 'partial' ? 'h-full rounded-full bg-red-500' : uploadProgress.status === 'done' ? 'h-full rounded-full bg-emerald-500' : 'h-full rounded-full bg-blue-600'} style={{ width: `${uploadProgress.percent}%` }} />
-              </div>
-              {uploadProgress.files.length > 0 ? (
-                <div className="mt-4 grid max-h-64 gap-3 overflow-y-auto pr-1 text-slate-950">
-                  {uploadProgress.files.map((file, index) => (
-                    <div key={`${file.name}-${file.size}-${index}`} className="grid gap-1 rounded-xl bg-slate-50 p-3">
-                      <div className="flex min-w-0 items-center justify-between gap-3 text-sm">
-                        <p className="min-w-0 flex-1 truncate font-semibold" title={file.name}>{file.name}</p>
-                        <span className="shrink-0 text-xs text-slate-500">{file.percent}%</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
-                        <span>{formatBytes(file.size)}</span>
-                        <div className="flex items-center gap-2">
-                          {file.status === 'error' && (
-                            <Button variant="default" className="h-6 px-2 text-[11px] font-extrabold text-white bg-blue-600 hover:bg-blue-700 shadow-none border-none" onClick={() => retryFailedUpload(file.name)}>
-                              Retry
-                            </Button>
-                          )}
-                          <span className={file.status === 'error' ? 'font-semibold text-red-600' : file.status === 'done' ? 'font-semibold text-emerald-600' : 'font-semibold text-blue-600'}>
-                            {file.status === 'error' ? 'Failed' : file.status === 'done' ? 'Done' : file.percent >= 99 ? 'Processing' : 'Uploading'}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-slate-200">
-                        <div className={file.status === 'error' ? 'h-full rounded-full bg-red-500' : file.status === 'done' ? 'h-full rounded-full bg-emerald-500' : 'h-full rounded-full bg-blue-600'} style={{ width: `${file.percent}%` }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          )}
-        </div>
-      ) : null}
+      <UploadProgressPanel />
     </main>
   )
 }

@@ -1,5 +1,6 @@
 import { Clock, Download, Edit3, Eye } from 'lucide-react'
 import { Card } from '@/components/ui/card'
+import { IconTile } from '@/components/ui/icon-tile'
 import { FileTable } from '@/components/drive/FileTable'
 import { MetricCard } from '@/components/drive/MetricCard'
 import { PageHeader } from '@/components/drive/PageHeader'
@@ -15,24 +16,24 @@ export function RecentPage() {
   return (
     <>
       <PageHeader title="Recent" description="Latest opened and modified files." />
-      <div className="mt-8 grid gap-4 md:grid-cols-3">
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
         <MetricCard label="Opened Today" value="8" icon={Eye} />
         <MetricCard label="Modified" value="4" icon={Edit3} />
         <MetricCard label="Downloads" value="2" icon={Download} />
       </div>
-      <Card className="mt-8 p-5">
-        <h2 className="font-extrabold">Activity</h2>
+      <Card className="mt-6 p-5">
+        <h2 className="text-base font-extrabold tracking-tight text-fg">Activity</h2>
         <div className="mt-4 grid gap-3">
           {activities.map((activity) => (
-            <div key={activity.text} className="flex items-center gap-3 rounded-xl bg-slate-50 p-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-blue-600 shadow-sm"><activity.icon className="h-4 w-4" /></div>
-              <div className="flex-1"><p className="font-semibold">{activity.text}</p><p className="text-sm text-slate-500">{activity.time}</p></div>
-              <Clock className="h-4 w-4 text-slate-400" />
+            <div key={activity.text} className="flex items-center gap-3 rounded-xl bg-surface-sunken p-3">
+              <IconTile icon={activity.icon} size="sm" />
+              <div className="min-w-0 flex-1"><p className="font-semibold text-fg">{activity.text}</p><p className="text-sm text-fg-muted">{activity.time}</p></div>
+              <Clock className="h-4 w-4 text-fg-subtle" aria-hidden="true" />
             </div>
           ))}
         </div>
       </Card>
-      <FileTable files={files} mode="recent" />
+      <FileTable files={files} mode="recent" className="mt-6" />
     </>
   )
 }

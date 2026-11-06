@@ -130,7 +130,8 @@ Important files:
 - `frontend/src/lib/api.ts`: API helper, token refresh retry, formatting utilities.
 - `frontend/src/lib/auth.ts`: local auth session storage.
 - `frontend/src/lib/plyr.ts`: video preview player loading.
-- `frontend/src/style.css`: Tailwind import and global styles.
+- `frontend/src/style.css`: Tailwind import, design tokens for both themes, motion, and global styles.
+- `frontend/src/lib/theme.ts`: light/dark theme state and switching.
 
 Commands:
 - `cd frontend && npm run dev`: start Vite dev server.
@@ -147,7 +148,10 @@ Frontend conventions:
 - Use `apiFetch` for normal JSON API calls.
 - Use raw `fetch` or `XMLHttpRequest` only when response streaming/blob/progress requires it.
 - Keep access/refresh token handling centralized in `frontend/src/lib/api.ts` and `frontend/src/lib/auth.ts`.
-- Use existing `Button`, `Card`, and `Input` primitives before adding new UI primitives.
+- Use existing `components/ui/**` primitives (`Button`, `Card`, `Input`, `Select`, `Checkbox`, `Field`, `Alert`, `Badge`, `IconTile`, `Progress`, `Skeleton`, `EmptyState`, `Segmented`, `MenuPanel`) before adding new UI primitives.
+- Style with the semantic tokens from `frontend/src/style.css` (`bg-surface`, `text-fg-muted`, `border-line`, `text-accent`, ...). Raw palette classes such as `bg-white` or `text-slate-500` don't follow the theme.
+- Use `DummyModal` for confirmations and `Alert` for messages, not `alert()` or `confirm()`.
+- Use the `animate-*` utilities and `ease-soft` for motion, and name transition properties instead of using `transition-all`. Only clickable cards lift on hover (`Card interactive`).
 - Use `cn` from `frontend/src/lib/utils.ts` for conditional class names.
 - Preserve current Tailwind visual style unless task explicitly asks redesign.
 - Keep protected dashboard pages inside `ProtectedRoute` and `DriveLayout`.

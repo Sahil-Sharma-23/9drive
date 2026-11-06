@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react'
-import { RotateCcw, Trash2, ShieldAlert, FileText, CheckCircle2 } from 'lucide-react'
+import { RotateCcw, Trash2 } from 'lucide-react'
+import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import { EmptyState, LoadFailedState } from '@/components/ui/empty-state'
+import { DummyModal } from '@/components/drive/DummyModal'
+import { FileIcon, fileKindFromMime } from '@/components/drive/FileIcon'
+import { FileTableSkeleton } from '@/components/drive/FileTable'
 import { PageHeader } from '@/components/drive/PageHeader'
-import { apiFetch, formatBytes } from '@/lib/api'
+import { apiFetch, formatBytes, formatDate } from '@/lib/api'
+import { cn } from '@/lib/utils'
 
 type TrashFile = {
   id: string
@@ -18,12 +25,18 @@ type TrashFile = {
   }
 }
 
+const headCell = 'px-3 py-3 text-xs font-bold text-fg-muted first:pl-5 last:pr-5'
+const bodyCell = 'px-3 py-3 first:pl-5 last:pr-5'
+
 export function TrashPage() {
   const [files, setFiles] = useState<TrashFile[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error' | ''>('')
+  const [pendingDelete, setPendingDelete] = useState<string[] | null>(null)
 
   async function loadTrash() {
     setLoading(true)
@@ -33,8 +46,10 @@ export function TrashPage() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to load trash')
       setMessageType('error')
+      setLoadFailed(true)
     } finally {
       setLoading(false)
+      setLoaded(true)
     }
   }
 
@@ -57,6 +72,15 @@ export function TrashPage() {
     }
   }
 
+  function removeFromList(ids: string[]) {
+    setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      ids.forEach((id) => next.delete(id))
+      return next
+    })
+  }
+
   async function handleRestore(ids: string[]) {
     if (ids.length === 0) return
     setLoading(true)
@@ -66,12 +90,7 @@ export function TrashPage() {
         method: 'POST',
         body: JSON.stringify({ fileIds: ids })
       })
-      setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        ids.forEach((id) => next.delete(id))
-        return next
-      })
+      removeFromList(ids)
       setMessage(`Successfully restored ${ids.length} file(s).`)
       setMessageType('success')
       window.dispatchEvent(new Event('9drive:storage-changed'))
@@ -83,9 +102,10 @@ export function TrashPage() {
     }
   }
 
-  async function handlePermanentDelete(ids: string[]) {
-    if (ids.length === 0) return
-    if (!confirm(`Are you sure you want to permanently delete ${ids.length} file(s)? This action cannot be undone.`)) return
+  async function confirmPermanentDelete() {
+    const ids = pendingDelete
+    if (!ids || ids.length === 0) return
+    setPendingDelete(null)
     setLoading(true)
     setMessage('')
     try {
@@ -93,12 +113,7 @@ export function TrashPage() {
         method: 'DELETE',
         body: JSON.stringify({ fileIds: ids })
       })
-      setFiles((prev) => prev.filter((f) => !ids.includes(f.id)))
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        ids.forEach((id) => next.delete(id))
-        return next
-      })
+      removeFromList(ids)
       setMessage(`Permanently deleted ${ids.length} file(s).`)
       setMessageType('success')
       window.dispatchEvent(new Event('9drive:storage-changed'))
@@ -108,6 +123,19 @@ export function TrashPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function rowActions(file: TrashFile) {
+    return (
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="ghost" size="icon-sm" onClick={() => handleRestore([file.id])} disabled={loading} title="Restore" aria-label={`Restore ${file.name}`}>
+          <RotateCcw className="h-4 w-4" />
+        </Button>
+        <Button variant="danger" size="icon-sm" onClick={() => setPendingDelete([file.id])} disabled={loading} title="Delete Permanently" aria-label={`Delete ${file.name} permanently`}>
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -121,7 +149,7 @@ export function TrashPage() {
               <Button variant="outline" onClick={() => handleRestore(Array.from(selectedIds))} disabled={loading}>
                 <RotateCcw className="h-4 w-4" /> Restore Selected ({selectedIds.size})
               </Button>
-              <Button variant="danger" onClick={() => handlePermanentDelete(Array.from(selectedIds))} disabled={loading}>
+              <Button variant="danger" onClick={() => setPendingDelete(Array.from(selectedIds))} disabled={loading}>
                 <Trash2 className="h-4 w-4" /> Delete Selected ({selectedIds.size})
               </Button>
             </>
@@ -129,99 +157,89 @@ export function TrashPage() {
         }
       />
 
-      {message ? (
-        <p
-          className={`mt-5 rounded-xl p-3 text-sm flex items-center gap-2 ${
-            messageType === 'success' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-          }`}
-        >
-          {messageType === 'success' ? <CheckCircle2 className="h-4 w-4" /> : <ShieldAlert className="h-4 w-4" />}
-          {message}
-        </p>
-      ) : null}
+      {message ? <Alert tone={messageType === 'success' ? 'success' : 'danger'} className="mt-5">{message}</Alert> : null}
 
-      <Card className="mt-8 overflow-hidden">
-        {files.length === 0 ? (
-          <div className="flex flex-col items-center justify-center p-12 text-center">
-            <Trash2 className="h-12 w-12 text-slate-400 mb-3" />
-            <p className="text-base font-bold">Trash is empty</p>
-            <p className="text-sm text-slate-500 mt-1">Deleted files will appear here.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 text-sm font-semibold text-slate-500">
-                  <th className="p-4 w-12">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.size === files.length && files.length > 0}
-                      onChange={toggleSelectAll}
-                      className="rounded border-slate-300"
-                    />
-                  </th>
-                  <th className="p-4">Name</th>
-                  <th className="p-4">Account</th>
-                  <th className="p-4">Size</th>
-                  <th className="p-4">Deleted At</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+      {!loaded ? <FileTableSkeleton className="mt-6" /> : (
+        <Card className="mt-6 overflow-hidden">
+          {loadFailed ? (
+            <LoadFailedState className="py-12" />
+          ) : files.length === 0 ? (
+            <EmptyState icon={Trash2} title="Recycle Bin is empty" description="Deleted files will appear here." className="py-12" />
+          ) : (
+            <>
+              {/* Mobile list */}
+              <div className="divide-y divide-line sm:hidden">
+                <label className="flex items-center justify-between px-4 py-3 text-sm font-bold text-fg">
+                  <span>Select all files</span>
+                  <Checkbox className="h-5 w-5" checked={selectedIds.size === files.length} onChange={toggleSelectAll} />
+                </label>
                 {files.map((file) => (
-                  <tr key={file.id} className="border-b border-slate-100 hover:bg-slate-50/50 transition">
-                    <td className="p-4">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(file.id)}
-                        onChange={() => toggleSelect(file.id)}
-                        className="rounded border-slate-300"
-                      />
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <FileText className="h-5 w-5 text-slate-400 shrink-0" />
-                        <span className="font-medium truncate max-w-xs sm:max-w-md block" title={file.name}>
-                          {file.name}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="p-4 text-sm text-slate-500">
-                      {file.connectedAccount.email} ({file.provider})
-                    </td>
-                    <td className="p-4 text-sm font-semibold">{formatBytes(file.sizeBytes)}</td>
-                    <td className="p-4 text-sm text-slate-500">
-                      {new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(file.deletedAt))}
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRestore([file.id])}
-                          disabled={loading}
-                          title="Restore"
-                        >
-                          <RotateCcw className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => handlePermanentDelete([file.id])}
-                          disabled={loading}
-                          title="Delete Permanently"
-                        >
-                          <Trash2 className="h-4 w-4 text-red-500" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
+                  <div key={file.id} className={cn('flex items-center gap-3 px-4 py-3 transition-colors duration-150', selectedIds.has(file.id) && 'bg-accent-soft')}>
+                    <Checkbox checked={selectedIds.has(file.id)} onChange={() => toggleSelect(file.id)} aria-label={`Select ${file.name}`} />
+                    <FileIcon kind={fileKindFromMime(file.mimeType)} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-fg" title={file.name}>{file.name}</p>
+                      <p className="mt-0.5 truncate text-xs tabular-nums text-fg-muted">{formatBytes(file.sizeBytes)} · {formatDate(file.deletedAt)}</p>
+                    </div>
+                    {rowActions(file)}
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden overflow-x-auto sm:block">
+                <table className="w-full border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-line">
+                      <th className={cn(headCell, 'w-9')}>
+                        <Checkbox checked={selectedIds.size === files.length} onChange={toggleSelectAll} aria-label="Select all files" />
+                      </th>
+                      <th className={headCell}>Name</th>
+                      <th className={headCell}>Account</th>
+                      <th className={headCell}>Size</th>
+                      <th className={headCell}>Deleted At</th>
+                      <th className={cn(headCell, 'text-right')}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {files.map((file) => (
+                      <tr key={file.id} className={cn('border-b border-line transition-colors duration-150 last:border-b-0', selectedIds.has(file.id) ? 'bg-accent-soft' : 'hover:bg-surface-hover')}>
+                        <td className={bodyCell}>
+                          <Checkbox checked={selectedIds.has(file.id)} onChange={() => toggleSelect(file.id)} aria-label={`Select ${file.name}`} />
+                        </td>
+                        <td className={bodyCell}>
+                          <div className="flex items-center gap-2.5">
+                            <FileIcon kind={fileKindFromMime(file.mimeType)} />
+                            <span className="block max-w-xs truncate font-semibold text-fg xl:max-w-md" title={file.name}>
+                              {file.name}
+                            </span>
+                          </div>
+                        </td>
+                        <td className={cn(bodyCell, 'text-fg-muted')}>{file.connectedAccount.email}</td>
+                        <td className={cn(bodyCell, 'whitespace-nowrap font-semibold tabular-nums text-fg')}>{formatBytes(file.sizeBytes)}</td>
+                        <td className={cn(bodyCell, 'whitespace-nowrap text-fg-muted')}>{formatDate(file.deletedAt)}</td>
+                        <td className={bodyCell}>{rowActions(file)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </Card>
+      )}
+
+      <DummyModal
+        open={pendingDelete !== null}
+        title="Delete permanently?"
+        description={`${pendingDelete?.length === 1 ? 'This file' : `These ${pendingDelete?.length ?? 0} files`} will be deleted from your storage provider. This can't be undone.`}
+        onClose={() => setPendingDelete(null)}
+      >
+        <div className="flex justify-end gap-3">
+          <Button variant="outline" onClick={() => setPendingDelete(null)}>Cancel</Button>
+          <Button variant="danger" onClick={confirmPermanentDelete}><Trash2 className="h-4 w-4" />Delete Permanently</Button>
+        </div>
+      </DummyModal>
     </>
   )
 }
