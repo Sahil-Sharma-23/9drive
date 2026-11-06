@@ -8,26 +8,68 @@ import {
   Folder,
   FileText,
   Download,
-  AlertTriangle,
-  Move
+  Move,
+  type LucideIcon
 } from 'lucide-react'
+import { Alert } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { EmptyState, LoadFailedState } from '@/components/ui/empty-state'
+import { IconTile, type IconTileTone } from '@/components/ui/icon-tile'
+import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/drive/PageHeader'
-import { apiFetch, formatDate } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { apiFetch, formatBytes, formatDate } from '@/lib/api'
 
 type AuditLog = {
   id: string
   action: string
   entityType: string
   entityId: string | null
-  metadata: string | any | null
+  metadata: string | Record<string, unknown> | null
   createdAt: string
+}
+
+function actionStyle(action: string): { tone: IconTileTone; icon: LucideIcon } {
+  const act = action.toUpperCase()
+  if (act.includes('CREATE') || act.includes('UPLOAD')) return { tone: 'success', icon: Plus }
+  if (act.includes('DELETE') || act.includes('PERMANENT') || act.includes('TRASH')) return { tone: 'danger', icon: Trash2 }
+  if (act.includes('RESTORE') || act.includes('SYNC')) return { tone: 'warning', icon: RefreshCw }
+  if (act.includes('MOVE')) return { tone: 'accent', icon: Move }
+  if (act.includes('DOWNLOAD')) return { tone: 'accent', icon: Download }
+  return { tone: 'neutral', icon: History }
+}
+
+function actionLabel(action: string) {
+  const words = action.replace(/_/g, ' ').toLowerCase()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+function metadataSummary(metadata: AuditLog['metadata']) {
+  if (!metadata) return null
+  let parsed: unknown = metadata
+  if (typeof metadata === 'string') {
+    try {
+      parsed = JSON.parse(metadata)
+    } catch {
+      return metadata
+    }
+  }
+  if (typeof parsed !== 'object' || parsed === null) return String(parsed)
+
+  const details = parsed as Record<string, unknown>
+  const parts: string[] = []
+  if (details.name) parts.push(`Name: ${details.name}`)
+  if (details.fileName) parts.push(`File: ${details.fileName}`)
+  if (details.folderName) parts.push(`Folder: ${details.folderName}`)
+  if (details.count !== undefined) parts.push(`Count: ${details.count}`)
+  const size = details.sizeBytes ?? details.size
+  if (size !== undefined) parts.push(`Size: ${formatBytes(Number(size))}`)
+  return parts.length > 0 ? parts.join(' | ') : JSON.stringify(details)
 }
 
 export function ActivityLogPage() {
   const [logs, setLogs] = useState<AuditLog[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   async function loadLogs() {
@@ -47,91 +89,6 @@ export function ActivityLogPage() {
     loadLogs().catch(() => undefined)
   }, [])
 
-  function getActionBadge(action: string) {
-    const act = action.toUpperCase()
-    if (act.includes('CREATE') || act.includes('UPLOAD')) {
-      return {
-        bg: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
-        icon: Plus,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    if (act.includes('DELETE') || act.includes('PERMANENT') || act.includes('TRASH')) {
-      return {
-        bg: 'bg-rose-500/10 text-rose-600 border-rose-500/20',
-        icon: Trash2,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    if (act.includes('RESTORE') || act.includes('SYNC')) {
-      return {
-        bg: 'bg-amber-500/10 text-amber-600 border-amber-500/20',
-        icon: RefreshCw,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    if (act.includes('MOVE')) {
-      return {
-        bg: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20',
-        icon: Move,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    if (act.includes('DOWNLOAD')) {
-      return {
-        bg: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
-        icon: Download,
-        label: action.replace(/_/g, ' ')
-      }
-    }
-    return {
-      bg: 'bg-slate-500/10 text-slate-600 border-slate-500/20',
-      icon: History,
-      label: action.replace(/_/g, ' ')
-    }
-  }
-
-  function renderMetadata(metadata: any) {
-    if (!metadata) return null
-    let parsed = metadata
-    if (typeof metadata === 'string') {
-      try {
-        parsed = JSON.parse(metadata)
-      } catch {
-        return <span className="text-slate-500">{metadata}</span>
-      }
-    }
-
-    if (typeof parsed !== 'object') {
-      return <span className="text-slate-500">{String(parsed)}</span>
-    }
-
-    // Special metadata keys rendering
-    const parts: string[] = []
-    if (parsed.name) parts.push(`Name: ${parsed.name}`)
-    if (parsed.fileName) parts.push(`File: ${parsed.fileName}`)
-    if (parsed.folderName) parts.push(`Folder: ${parsed.folderName}`)
-    if (parsed.count !== undefined) parts.push(`Count: ${parsed.count}`)
-    if (parsed.sizeBytes !== undefined) {
-      const bytes = Number(parsed.sizeBytes)
-      parts.push(`Size: ${formatBytes(bytes)}`)
-    }
-
-    if (parts.length > 0) {
-      return <span className="text-xs text-slate-500 font-medium">{parts.join(' | ')}</span>
-    }
-
-    return <span className="text-xs text-slate-500 font-mono">{JSON.stringify(parsed)}</span>
-  }
-
-  function formatBytes(bytes: number) {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
   return (
     <>
       <PageHeader
@@ -139,62 +96,50 @@ export function ActivityLogPage() {
         description="View audit trails and file activities in your 9Drive workspace."
       />
 
-      {error && (
-        <div className="mt-6 flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
-          <AlertTriangle className="h-5 w-5 shrink-0" />
-          <p className="text-sm font-semibold">{error}</p>
-        </div>
-      )}
+      {error ? <Alert tone="danger" className="mt-6">{error}</Alert> : null}
 
-      <Card className="mt-8 overflow-hidden border border-slate-200 bg-white shadow-xl shadow-slate-900/5">
-        <div className="border-b border-slate-100 bg-slate-50/50 px-6 py-4">
-          <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-            <History className="h-5 w-5 text-slate-500" />
-            Recent Activity Trail
-          </h2>
+      <Card className="mt-6 overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-line bg-surface-sunken px-5 py-4">
+          <History className="h-5 w-5 text-fg-muted" aria-hidden="true" />
+          <h2 className="text-base font-extrabold tracking-tight text-fg">Recent Activity Trail</h2>
         </div>
 
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-line">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-12 text-slate-500">
-              <RefreshCw className="h-8 w-8 animate-spin text-blue-600 mb-2" />
-              <p className="text-sm">Loading activity logs...</p>
-            </div>
+            Array.from({ length: 5 }).map((_, index) => (
+              <div key={index} className="flex items-center gap-4 p-5">
+                <Skeleton className="h-9 w-9 rounded-lg" />
+                <div className="grid flex-1 gap-2"><Skeleton className="h-4 w-40" /><Skeleton className="h-3 w-56" /></div>
+              </div>
+            ))
+          ) : error ? (
+            <LoadFailedState className="py-14" />
           ) : logs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-slate-400">
-              <History className="h-12 w-12 stroke-[1.5] mb-3 text-slate-300" />
-              <p className="font-semibold text-slate-600">No activity yet</p>
-              <p className="text-sm text-slate-400 mt-1">Actions you perform on your folders and files will appear here.</p>
-            </div>
+            <EmptyState icon={History} title="No activity yet" description="Actions you perform on your folders and files will appear here." className="py-14" />
           ) : (
             logs.map((log) => {
-              const badge = getActionBadge(log.action)
+              const { tone, icon } = actionStyle(log.action)
               const EntityIcon = log.entityType === 'folder' ? Folder : FileText
+              const summary = metadataSummary(log.metadata)
 
               return (
-                <div key={log.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 hover:bg-slate-50 transition-colors">
-                  <div className="flex items-start gap-4">
-                    <div className={cn("flex h-9 w-9 items-center justify-center rounded-xl border font-bold shrink-0", badge.bg)}>
-                      <badge.icon className="h-4 w-4" />
-                    </div>
-                    <div>
+                <div key={log.id} className="flex flex-col justify-between gap-3 p-5 transition-colors duration-150 hover:bg-surface-hover sm:flex-row sm:items-center sm:gap-4">
+                  <div className="flex min-w-0 items-start gap-4">
+                    <IconTile icon={icon} tone={tone} size="sm" />
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-bold text-slate-900 uppercase tracking-wider text-[11px] px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50">
-                          {badge.label}
+                        <Badge className="normal-case">{actionLabel(log.action)}</Badge>
+                        <span className="flex items-center gap-1.5 text-xs text-fg-muted">
+                          <EntityIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                          {log.entityType}
                         </span>
-                        <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                          <EntityIcon className="h-3.5 w-3.5" />
-                          <span>{log.entityType}</span>
-                        </div>
                       </div>
-                      <div className="mt-2 flex flex-col gap-0.5">
-                        {renderMetadata(log.metadata)}
-                      </div>
+                      {summary ? <p className="mt-2 break-words text-xs font-medium text-fg-muted">{summary}</p> : null}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 text-xs text-slate-400 self-end sm:self-center">
-                    <Clock className="h-3.5 w-3.5" />
+                  <div className="flex shrink-0 items-center gap-2 self-end text-xs text-fg-muted sm:self-center">
+                    <Clock className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>{formatDate(log.createdAt)}</span>
                   </div>
                 </div>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { HardDrive } from 'lucide-react'
-import { Card } from '@/components/ui/card'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { AuthShell } from '@/components/auth/AuthShell'
+import { BrandLogo } from '@/components/drive/BrandLogo'
 import { apiFetch } from '@/lib/api'
 import { setAuthSession, type AuthUser } from '@/lib/auth'
 
@@ -11,12 +11,14 @@ export function GoogleAuthPage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const [message, setMessage] = useState('Completing Google sign-in...')
+  const [failed, setFailed] = useState(false)
   const token = params.get('token')
   const status = params.get('status')
 
   useEffect(() => {
     if (status === 'error' || !token) {
       setMessage('Google sign-in failed. Please try again.')
+      setFailed(true)
       return
     }
 
@@ -25,16 +27,18 @@ export function GoogleAuthPage() {
         setAuthSession(data.accessToken, data.refreshToken, data.user)
         navigate('/all-files', { replace: true })
       })
-      .catch((error) => setMessage(error instanceof Error ? error.message : 'Google sign-in failed. Please try again.'))
+      .catch((error) => {
+        setMessage(error instanceof Error ? error.message : 'Google sign-in failed. Please try again.')
+        setFailed(true)
+      })
   }, [navigate, status, token])
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 p-5">
-      <Card className="w-full max-w-sm p-6 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white"><HardDrive className="h-6 w-6" /></div>
-        <h1 className="mt-4 text-xl font-extrabold">Google Sign-in</h1>
-        <p className="mt-2 text-sm text-slate-500">{message}</p>
-      </Card>
-    </main>
+    <AuthShell className="max-w-sm text-center">
+      <BrandLogo className="mx-auto h-12 w-12" />
+      <h1 className="mt-4 text-xl font-extrabold tracking-tight text-fg">Google Sign-in</h1>
+      <p className="mt-2 text-sm text-fg-muted">{message}</p>
+      {failed ? <Link className="mt-4 inline-block text-sm font-bold text-accent transition-opacity duration-150 hover:opacity-80" to="/login">Back to login</Link> : null}
+    </AuthShell>
   )
 }

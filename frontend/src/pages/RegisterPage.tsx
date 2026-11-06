@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { HardDrive } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
+import { AuthDivider, AuthHeader, AuthShell } from '@/components/auth/AuthShell'
 import { GoogleLogo } from '@/components/auth/GoogleLogo'
+import { Alert } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { apiFetch } from '@/lib/api'
 import { setAuthSession, type AuthUser } from '@/lib/auth'
+import { getStoredTheme } from '@/lib/theme'
 
 type AuthResponse = { accessToken: string; refreshToken: string; user: AuthUser }
 const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY?.trim()
@@ -14,7 +16,8 @@ const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY?.trim()
 declare global {
   interface Window {
     grecaptcha?: {
-      render: (element: HTMLElement, options: { sitekey: string; callback: (token: string) => void; 'expired-callback': () => void }) => number
+      ready: (callback: () => void) => void
+      render: (element: HTMLElement, options: { sitekey: string; theme: 'light' | 'dark'; callback: (token: string) => void; 'expired-callback': () => void }) => number
       reset: (widgetId?: number) => void
     }
   }
@@ -39,22 +42,28 @@ export function RegisterPage() {
       if (!recaptchaRef.current || !window.grecaptcha || recaptchaWidgetId.current !== null) return
       recaptchaWidgetId.current = window.grecaptcha.render(recaptchaRef.current, {
         sitekey: recaptchaSiteKey,
+        theme: getStoredTheme(),
         callback: setCaptchaToken,
         'expired-callback': () => setCaptchaToken(''),
       })
     }
+    // The script's load event fires before grecaptcha.render exists, so wait for ready().
+    const renderWhenReady = () => window.grecaptcha?.ready(renderCaptcha)
 
-    if (!document.getElementById(scriptId)) {
-      const script = document.createElement('script')
-      script.id = scriptId
-      script.src = 'https://www.google.com/recaptcha/api.js?render=explicit'
-      script.async = true
-      script.defer = true
-      script.onload = renderCaptcha
-      document.body.appendChild(script)
-    } else {
-      renderCaptcha()
+    const existing = document.getElementById(scriptId)
+    if (existing) {
+      if (window.grecaptcha) renderWhenReady()
+      else existing.addEventListener('load', renderWhenReady, { once: true })
+      return
     }
+
+    const script = document.createElement('script')
+    script.id = scriptId
+    script.src = 'https://www.google.com/recaptcha/api.js?render=explicit'
+    script.async = true
+    script.defer = true
+    script.onload = renderWhenReady
+    document.body.appendChild(script)
   }, [])
 
   async function continueWithGoogle() {
@@ -92,26 +101,21 @@ export function RegisterPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 p-5">
-      <Card className="w-full max-w-md p-6">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white"><HardDrive className="h-6 w-6" /></div>
-          <div><h1 className="text-2xl font-extrabold">Register</h1><p className="text-sm text-slate-500">Create your storage gateway account.</p></div>
-        </div>
-        <form onSubmit={submit} className="mt-6 grid gap-4">
-          <label className="grid gap-2 text-sm font-semibold">Name<Input value={name} onChange={(e) => setName(e.target.value)} required /></label>
-          <label className="grid gap-2 text-sm font-semibold">Email<Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-          <label className="grid gap-2 text-sm font-semibold">Password<Input type="password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
-          {recaptchaSiteKey ? <div className="min-h-[78px] overflow-hidden rounded-xl bg-slate-50 p-2"><div ref={recaptchaRef} /></div> : null}
-          {error ? <p className="rounded-xl bg-red-50 p-3 text-sm text-red-600">{error}</p> : null}
-          <Button disabled={loading}>{loading ? 'Creating...' : 'Create Account'}</Button>
-        </form>
-        <div className="mt-4 grid gap-3">
-          <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-slate-400"><span className="h-px flex-1 bg-slate-200" />or<span className="h-px flex-1 bg-slate-200" /></div>
-          <Button variant="outline" disabled={googleLoading} onClick={continueWithGoogle}><GoogleLogo />{googleLoading ? 'Redirecting...' : 'Continue with Google and connect Drive'}</Button>
-        </div>
-        <p className="mt-5 text-center text-sm text-slate-500">Already registered? <Link className="font-bold text-blue-600" to="/login">Login</Link></p>
-      </Card>
-    </main>
+    <AuthShell>
+      <AuthHeader title="Register" description="Create your storage gateway account." />
+      <form onSubmit={submit} className="mt-6 grid gap-4">
+        <Field label="Name"><Input autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} required /></Field>
+        <Field label="Email"><Input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>
+        <Field label="Password"><Input type="password" autoComplete="new-password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required /></Field>
+        {recaptchaSiteKey ? <div className="min-h-[78px] overflow-hidden rounded-xl"><div ref={recaptchaRef} /></div> : null}
+        {error ? <Alert tone="danger">{error}</Alert> : null}
+        <Button disabled={loading}>{loading ? 'Creating...' : 'Create Account'}</Button>
+      </form>
+      <div className="mt-4 grid gap-3">
+        <AuthDivider />
+        <Button variant="outline" className="h-auto min-h-11 whitespace-normal py-2" disabled={googleLoading} onClick={continueWithGoogle}><GoogleLogo />{googleLoading ? 'Redirecting...' : 'Continue with Google and connect Drive'}</Button>
+      </div>
+      <p className="mt-5 text-center text-sm text-fg-muted">Already registered? <Link className="font-bold text-accent transition-opacity duration-150 hover:opacity-80" to="/login">Login</Link></p>
+    </AuthShell>
   )
 }

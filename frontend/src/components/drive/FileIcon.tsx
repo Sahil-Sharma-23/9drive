@@ -1,11 +1,27 @@
-import { FileArchive, FileImage, FilePlay, Folder } from 'lucide-react'
+import { File, FileImage, FilePlay, FileText, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { FileItem } from '@/data/drive-data'
 
+/** The one place file kinds get their icon and colour. */
+export const fileKinds: Record<FileItem['kind'], { icon: LucideIcon; tile: string; dot: string }> = {
+  image: { icon: FileImage, tile: 'bg-kind-image/15 text-kind-image', dot: 'bg-kind-image' },
+  video: { icon: FilePlay, tile: 'bg-kind-video/15 text-kind-video', dot: 'bg-kind-video' },
+  pdf: { icon: FileText, tile: 'bg-kind-pdf/15 text-kind-pdf', dot: 'bg-kind-pdf' },
+  doc: { icon: File, tile: 'bg-kind-doc/15 text-kind-doc', dot: 'bg-kind-doc' },
+}
+
+export function fileKindFromMime(mimeType: string): FileItem['kind'] {
+  if (mimeType.startsWith('image/')) return 'image'
+  if (mimeType.startsWith('video/')) return 'video'
+  if (mimeType.includes('pdf')) return 'pdf'
+  return 'doc'
+}
+
 export function FileIcon({ kind, className }: { kind: FileItem['kind']; className?: string }) {
-  const base = 'h-4 w-4 rounded-sm p-0.5 text-white'
-  if (kind === 'image') return <FileImage className={cn(base, 'bg-yellow-400', className)} />
-  if (kind === 'video') return <FilePlay className={cn(base, 'bg-orange-500', className)} />
-  if (kind === 'pdf') return <FileArchive className={cn(base, 'bg-cyan-400', className)} />
-  return <Folder className={cn(base, 'bg-lime-500', className)} />
+  const { icon: Icon, tile } = fileKinds[kind]
+  return (
+    <span className={cn('inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', tile, className)}>
+      <Icon className="h-[56%] w-[56%]" aria-hidden="true" />
+    </span>
+  )
 }

@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-9Drive is a Google Drive storage gateway. It lets users register/login with email/password or Google, automatically connect the first Drive account during Google sign-in, connect additional Google Drive accounts, track combined quota, upload files through the backend into a dedicated Google Drive `9drive` folder, organize files in virtual folders, preview/download/share files, sync MySQL file records from Google Drive, invite other users to files/folders, and route uploads to a connected Drive account with enough free space.
+9Drive is a self-hosted storage gateway for Google Drive accounts and S3-compatible buckets. It lets users register/login with email/password or Google, automatically connect the first Drive account during Google sign-in, connect additional Drive accounts or S3 buckets, track combined quota, upload files through the backend, organize files in folders, preview/download/share files, sync MySQL file records from Google Drive, record invites to files/folders, and route uploads to a connected account with enough free space.
 
 ## Repository Structure
 
-- `backend/`: Express API, TypeScript, Prisma schema/migrations, MySQL access, auth, Google OAuth/Drive integration.
+- `backend/`: Express API, TypeScript, Prisma schema/migrations, MySQL access, auth, Google OAuth/Drive and S3 integrations.
 - `frontend/`: Vite React app, protected dashboard UI, file/folder management, sharing, uploads, quota/settings pages.
 - `docker-compose.yml`: MySQL, backend, and nginx-served frontend services.
 - `.env.docker.example`: Docker environment template.
@@ -17,8 +17,7 @@
 - Node.js 20+
 - npm
 - MySQL 8+
-- Google Cloud project with Google Drive API enabled
-- Google OAuth client ID and secret
+- For Google sign-in and Drive accounts: a Google Cloud project with the Google Drive API enabled, plus an OAuth client ID and secret
 
 ## Backend
 
@@ -33,6 +32,7 @@ Stack:
 - Busboy streaming uploads
 - Google APIs client
 - Undici for Google file streaming
+- AWS SDK for S3-compatible storage
 
 Important files:
 - `backend/src/server.ts`: server entrypoint.
@@ -43,7 +43,9 @@ Important files:
 - `backend/src/middleware/auth.middleware.ts`: bearer auth.
 - `backend/src/middleware/error.middleware.ts`: JSON error responses.
 - `backend/src/modules/**`: feature route modules and provider services.
+- `backend/src/modules/files/stream-file.ts`: sends preview/download streaming to the Google or S3 provider.
 - `backend/src/modules/files/stream-google-file.ts`: Google file preview/download streaming.
+- `backend/src/modules/s3/s3.service.ts`: S3 client, upload, delete, quota sync, and streaming.
 - `backend/src/scripts/seed-google-config.ts`: stores encrypted global Google OAuth config.
 
 Commands:
@@ -86,10 +88,10 @@ Backend conventions:
 Security rules:
 - Never commit `.env` files or secrets.
 - Never log access tokens, refresh tokens, OAuth client secrets, JWT secrets, encryption keys, or raw public share tokens.
-- Google tokens are encrypted before database storage.
+- Google tokens and S3 credentials are encrypted before database storage.
 - App refresh tokens are hashed before database storage.
 - Auth handoff, share, and preview tokens are stored as hashes where applicable.
-- Uploaded files must stream through backend to Google Drive folder `9drive`; do not store uploaded files on disk.
+- Uploaded files must go through the backend to the connected provider (Google Drive `9drive` folder or S3 bucket); do not store uploaded files on disk.
 - Keep CORS restricted by `FRONTEND_URL`.
 - Keep auth/token storage behavior centralized; do not change without explicit reason.
 
@@ -117,9 +119,9 @@ Important files:
 - `frontend/src/App.tsx`: route registration.
 - `frontend/src/layouts/DriveLayout.tsx`: protected app shell, sidebar, header search, storage sidebar stats.
 - `frontend/src/pages/AllFilesPage.tsx`: core file/folder UI, uploads, context menus, preview, share/invite modals.
-- `frontend/src/pages/SharedPage.tsx`: shared links and invites UI.
+- `frontend/src/pages/SharedPage.tsx`: sent and received invites UI.
 - `frontend/src/pages/QuotaTrackerPage.tsx`: connected-account quota UI.
-- `frontend/src/pages/SettingsPage.tsx`: Google account/settings UI.
+- `frontend/src/pages/SettingsPage.tsx`: connected accounts, Google credentials, and settings UI.
 - `frontend/src/pages/GoogleAuthPage.tsx`: Google auth handoff exchange page.
 - `frontend/src/pages/PublicFilePage.tsx`: public shared file viewer/embed page.
 - `frontend/src/components/auth/GoogleLogo.tsx`: Google button logo.
@@ -128,7 +130,8 @@ Important files:
 - `frontend/src/lib/api.ts`: API helper, token refresh retry, formatting utilities.
 - `frontend/src/lib/auth.ts`: local auth session storage.
 - `frontend/src/lib/plyr.ts`: video preview player loading.
-- `frontend/src/style.css`: Tailwind import and global styles.
+- `frontend/src/style.css`: Tailwind import, design tokens for both themes, motion, and global styles.
+- `frontend/src/lib/theme.ts`: light/dark theme state and switching.
 
 Commands:
 - `cd frontend && npm run dev`: start Vite dev server.
@@ -145,7 +148,10 @@ Frontend conventions:
 - Use `apiFetch` for normal JSON API calls.
 - Use raw `fetch` or `XMLHttpRequest` only when response streaming/blob/progress requires it.
 - Keep access/refresh token handling centralized in `frontend/src/lib/api.ts` and `frontend/src/lib/auth.ts`.
-- Use existing `Button`, `Card`, and `Input` primitives before adding new UI primitives.
+- Use existing `components/ui/**` primitives (`Button`, `Card`, `Input`, `Select`, `Checkbox`, `Field`, `Alert`, `Badge`, `IconTile`, `Progress`, `Skeleton`, `EmptyState`, `Segmented`, `MenuPanel`) before adding new UI primitives.
+- Style with the semantic tokens from `frontend/src/style.css` (`bg-surface`, `text-fg-muted`, `border-line`, `text-accent`, ...). Raw palette classes such as `bg-white` or `text-slate-500` don't follow the theme.
+- Use `DummyModal` for confirmations and `Alert` for messages, not `alert()` or `confirm()`.
+- Use the `animate-*` utilities and `ease-soft` for motion, and name transition properties instead of using `transition-all`. Only clickable cards lift on hover (`Card interactive`).
 - Use `cn` from `frontend/src/lib/utils.ts` for conditional class names.
 - Preserve current Tailwind visual style unless task explicitly asks redesign.
 - Keep protected dashboard pages inside `ProtectedRoute` and `DriveLayout`.
@@ -172,7 +178,8 @@ Provider configs:
 - `GET /provider-configs`
 - `DELETE /provider-configs/:id`
 
-Google connected accounts:
+Connected accounts:
+- `POST /connected-accounts/s3`
 - `GET /connected-accounts/google/connect-url`
 - `GET /connected-accounts/google/connect`
 - `GET /connected-accounts/google/callback`
@@ -221,13 +228,14 @@ Public shared files:
 - `GET /public/files/:token/preview`
 
 Uploads:
-- `POST /uploads`
-- Content type: `multipart/form-data`.
-- Current frontend sends metadata first as `filesMeta`: JSON array of `{ fieldName, fileName, mimeType, sizeBytes, folderId? }`.
+- The browser uses the resumable routes: `POST /uploads/resumable/init`, `GET /uploads/resumable/status/:id`, `PUT /uploads/resumable/chunk/:id`. The frontend sends 5 MB chunks with a `Content-Range` header. These routes only support Google Drive.
+- `POST /uploads` and `POST /api/v1/uploads` take `multipart/form-data` and support both providers. The frontend doesn't call `POST /uploads`. `POST /api/v1/uploads` needs an API key with the `files:upload` scope.
+- Multipart requests send metadata first as `filesMeta`: JSON array of `{ fieldName, fileName, mimeType, sizeBytes, folderId? }`.
 - File fields then match `filesMeta[*].fieldName`, e.g. `file-0`, `file-1`.
-- Backend selects a connected Drive account with enough available quota and streams each file directly to Google Drive.
-- Google Drive uploads are placed under the root Drive folder named `9drive`; virtual folders remain app/database-only.
-- `POST /files/sync-google` treats Google Drive folder `9drive` as source of truth for physical files: create missing MySQL file rows, update changed metadata, and mark missing Drive files as deleted.
+- Backend selects a connected Google Drive or S3 account with enough available quota, using the user's routing policy.
+- Folders live in MySQL and are mirrored to the user's first connected Google Drive account.
+- Google Drive uploads are placed under the root Drive folder named `9drive`, or in the target folder's mirrored Drive folder.
+- `POST /files/sync-google` treats Google Drive folder `9drive` and its mirrored folders as source of truth for physical files: create missing MySQL file rows, update changed metadata and folder placement, and mark missing Drive files as deleted.
 
 ## Docker
 
@@ -270,7 +278,7 @@ Manual smoke test:
 - Upload one or more files and verify progress panel.
 - Switch file list/grid view.
 - Right-click file and test preview/download/rename/move/share/invite/delete where relevant.
-- Open Shared page and verify shared links/invites.
+- Open Shared page and verify invites.
 - Open public file link and test preview/download.
 
 ## Agent Rules

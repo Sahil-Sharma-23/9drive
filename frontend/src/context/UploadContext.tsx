@@ -143,6 +143,9 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // Without this the panel would stay on "Processing on server" after a clean run
+    setUploadProgress((current) => (current.status === 'uploading' ? { ...current, status: 'done' } : current))
+
     // Dispatch global events so active pages reload their data
     window.dispatchEvent(new Event('9drive:storage-changed'))
     window.dispatchEvent(new Event('9drive:upload-completed'))

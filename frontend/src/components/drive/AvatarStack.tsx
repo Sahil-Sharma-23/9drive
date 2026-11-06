@@ -1,13 +1,11 @@
-export function AvatarStack({ count }: { count: number }) {
+export function AvatarStack({ count, label }: { count: number; label: string }) {
+  const initial = label.trim().charAt(0).toUpperCase() || '?'
   return (
-    <div className="flex -space-x-2">
-      {Array.from({ length: count }).map((_, index) => (
-        <img
-          key={index}
-          src={`https://i.pravatar.cc/48?img=${12 + index}`}
-          alt="Member avatar"
-          className="h-5 w-5 rounded-full border-2 border-white object-cover"
-        />
+    <div className="flex -space-x-1.5" aria-hidden="true">
+      {Array.from({ length: Math.min(count, 3) }).map((_, index) => (
+        <span key={index} className="flex h-5 w-5 items-center justify-center rounded-full border border-line bg-accent-soft text-[9px] font-bold text-accent">
+          {initial}
+        </span>
       ))}
     </div>
   )
